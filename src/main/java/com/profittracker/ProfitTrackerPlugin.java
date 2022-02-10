@@ -1,12 +1,18 @@
 package com.profittracker;
 
-import com.google.inject.Provides;
 import javax.inject.Inject;
+
+import com.google.inject.Provides;
+
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.*;
-
-import net.runelite.api.events.*;
-
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.ObjectID;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.ScriptPreFired;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -33,6 +39,9 @@ public class ProfitTrackerPlugin extends Plugin
     private boolean inventoryValueChanged;
     private boolean inProfitTrackSession;
 
+    private boolean firstStart = true;
+    private boolean paused = false;
+
     @Inject
     private Client client;
 
@@ -56,16 +65,14 @@ public class ProfitTrackerPlugin extends Plugin
 
         goldDropsObject = new ProfitTrackerGoldDrops(client, itemManager);
 
-        inventoryValueObject = new ProfitTrackerInventoryValue(client, itemManager);
+        inventoryValueObject = new ProfitTrackerInventoryValue(client, itemManager, config);
 
         initializeVariables();
 
-        // start tracking only if plugin was re-started mid game
         if (client.getGameState() == GameState.LOGGED_IN)
         {
             startProfitTrackingSession();
         }
-
     }
 
     private void initializeVariables()
@@ -84,51 +91,61 @@ public class ProfitTrackerPlugin extends Plugin
 
         inventoryValueChanged = false;
 
-        inProfitTrackSession = false;
-
+        inProfitTrackSession = true;
     }
 
+    /**
+     * Starts tracking profit
+     */
     private void startProfitTrackingSession()
     {
-        /*
-        Start tracking profit from now on
-         */
-
         initializeVariables();
 
         // initialize timer
         startTickMillis = System.currentTimeMillis();
 
-        overlay.updateStartTimeMillies(startTickMillis);
-
+        overlay.updateStartTimeMillis(startTickMillis);
         overlay.startSession();
 
         inProfitTrackSession = true;
     }
 
     @Override
-    protected void shutDown() throws Exception
-    {
+    protected void shutDown() {
         // Remove the inventory overlay
         overlayManager.remove(overlay);
-
     }
 
+    /**
+     * Main plugin logic
+     *
+     * 1. If inventory changed,
+     *      -  calculate profit (inventory value difference)
+     *      - generate gold drop (nice animation for showing gold earn or loss)
+     *
+     * 2. Calculate profit rate and update in overlay
+     *
+     * @param gameTick
+     */
     @Subscribe
     public void onGameTick(GameTick gameTick)
     {
-        /*
-        Main plugin logic here
-
-        1. If inventory changed,
-            - calculate profit (inventory value difference)
-            - generate gold drop (nice animation for showing gold earn or loss)
-
-        2. Calculate profit rate and update in overlay
-
-        */
+        if (firstStart && client.getGameState() == GameState.LOGGED_IN) {
+            startProfitTrackingSession();
+            firstStart = false;
+        }
 
         long tickProfit;
+
+        if (config.pauseTracker() && !paused) {
+            inProfitTrackSession = false;
+            paused = true;
+        }
+
+        if (!config.pauseTracker() && paused) {
+            inProfitTrackSession = true;
+            paused = false;
+        }
 
         if (!inProfitTrackSession)
         {
@@ -152,17 +169,16 @@ public class ProfitTrackerPlugin extends Plugin
 
             inventoryValueChanged = false;
         }
-
     }
 
+    /**
+     * Calculate and return the profit for this tick
+     * If skipTickForProfitCalculation is set, meaning this tick was bank/deposit so return 0
+     *
+     * @return calculated profit
+     */
     private long calculateTickProfit()
     {
-        /*
-        Calculate and return the profit for this tick
-        if skipTickForProfitCalculation is set, meaning this tick was bank / deposit
-        so return 0
-
-         */
         long newInventoryValue;
         long newProfit;
 
@@ -174,10 +190,8 @@ public class ProfitTrackerPlugin extends Plugin
             // calculate new profit
             newProfit = newInventoryValue - prevInventoryValue;
 
-        }
-        else
-        {
-            /* first time calculation / banking / equipping */
+        } else {
+            // first time calculation / banking / equipping
             log.info("Skipping profit calculation!");
 
             skipTickForProfitCalculation = false;
@@ -192,32 +206,30 @@ public class ProfitTrackerPlugin extends Plugin
         return newProfit;
     }
 
+    /**
+     * This event tells us when inventory has changed and when banking/equipment event occurred this tick
+     *
+     * @param event
+     */
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event)
     {
-        /*
-        this event tells us when inventory has changed
-        and when banking/equipment event occured this tick
-         */
         log.info("onItemContainerChanged container id: " + event.getContainerId());
 
         int containerId = event.getContainerId();
 
-        if( containerId == InventoryID.INVENTORY.getId() ||
-            containerId == InventoryID.EQUIPMENT.getId()) {
+        if (containerId == InventoryID.INVENTORY.getId() ||
+                containerId == InventoryID.EQUIPMENT.getId()) {
             // inventory has changed - need calculate profit in onGameTick
             inventoryValueChanged = true;
-
         }
 
-        // in these events, inventory WILL be changed but we DON'T want to calculate profit!
-        if(     containerId == InventoryID.BANK.getId()) {
+        // in these events, inventory WILL be changed, but we DON'T want to calculate profit!
+        if(containerId == InventoryID.BANK.getId()) {
             // this is a bank interaction.
             // Don't take this into account
             skipTickForProfitCalculation = true;
-
         }
-
     }
 
     @Subscribe
@@ -230,20 +242,16 @@ public class ProfitTrackerPlugin extends Plugin
             // we've interacted with a deposit box. Don't take this tick into account for profit calculation
             skipTickForProfitCalculation = true;
         }
-
-
     }
 
     @Provides
-    ProfitTrackerConfig provideConfig(ConfigManager configManager)
-    {
+    ProfitTrackerConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(ProfitTrackerConfig.class);
     }
 
 
     @Subscribe
-    public void onScriptPreFired(ScriptPreFired scriptPreFired)
-    {
+    public void onScriptPreFired(ScriptPreFired scriptPreFired) {
         goldDropsObject.onScriptPreFired(scriptPreFired);
     }
 }

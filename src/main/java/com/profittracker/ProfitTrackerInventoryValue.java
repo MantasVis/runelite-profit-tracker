@@ -1,108 +1,92 @@
 package com.profittracker;
 
-import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.*;
-import net.runelite.client.game.ItemManager;
+import static com.profittracker.ProfitTrackerConstants.CANNON_BARRELS;
+import static com.profittracker.ProfitTrackerConstants.CANNON_BASE;
+import static com.profittracker.ProfitTrackerConstants.CANNON_FURNACE;
+import static com.profittracker.ProfitTrackerConstants.CANNON_STAND;
+import static com.profittracker.ProfitTrackerConstants.EMPTY_SLOT_ITEMID;
 
 import java.util.Arrays;
 import java.util.stream.LongStream;
 
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.client.game.ItemManager;
+
+/**
+ * Provides functional methods for calculating inventory value
+ */
 @Slf4j
 public class ProfitTrackerInventoryValue {
-    /*
-    Provide functional methods for calculating inventory value
-     */
-    /*
-    Singletons which will be provided at creation by the plugin
-     */
-
-    static final int EMPTY_SLOT_ITEMID = -1;
 
     private final ItemManager itemManager;
     private final Client client;
+    private final ProfitTrackerConfig config;
 
-    public ProfitTrackerInventoryValue( Client client, ItemManager itemManager) {
+    public ProfitTrackerInventoryValue(Client client, ItemManager itemManager, ProfitTrackerConfig config) {
         this.client = client;
         this.itemManager = itemManager;
+        this.config = config;
     }
 
+    /**
+     * Calculates GE value of single item
+     *
+     * @param item value to calculate
+     * @return value of the specified item
+     */
     private long calculateItemValue(Item item) {
-        /*
-        Calculate GE value of single item
-         */
 
-        int itemId = item.getId();
-
-        if (itemId < -1)
-        {
-            // unexpected
-            log.info("Bad item id!" + itemId);
-            return 0;
-
-        }
-
-        if (itemId == EMPTY_SLOT_ITEMID)
-        {
+        if (item.getId() < -1) {
+            log.info("Bad item id!" + item.getId());
             return 0;
         }
 
-        log.info(String.format("calculateItemValue itemId = %d", itemId));
+        if (item.getId() == EMPTY_SLOT_ITEMID) {
+            return 0;
+        }
+
+        if (config.ignoreDwarfCannon() && Arrays.asList(CANNON_BASE, CANNON_STAND, CANNON_BARRELS, CANNON_FURNACE).contains(item.getId())) {
+            return 0;
+        }
+
+        log.info(String.format("calculateItemValue itemId = %d", item.getId()));
 
         // multiply quantity  by GE value
-        return item.getQuantity() * (itemManager.getItemPrice(itemId));
+        return (long) item.getQuantity() * (itemManager.getItemPrice(item.getId()));
     }
 
-    public long calculateContainerValue(InventoryID ContainerID)
-    {
-        /*
-        calculate total inventory value
-         */
-
+    /**
+     * Calculates specified container value
+     *
+     * @param ContainerID container to calculate
+     * @return the value of the container
+     */
+    public long calculateContainerValue(InventoryID ContainerID) {
         long newInventoryValue;
 
         ItemContainer container = client.getItemContainer(ContainerID);
 
-        if (container == null)
-        {
+        if (container == null) {
             return 0;
         }
 
         Item[] items = container.getItems();
 
-        newInventoryValue = Arrays.stream(items).parallel().flatMapToLong(item ->
-                LongStream.of(calculateItemValue(item))
-        ).sum();
+        newInventoryValue = Arrays.stream(items).flatMapToLong(item -> LongStream.of(calculateItemValue(item))).sum();
 
         return newInventoryValue;
     }
 
-
-    public long calculateInventoryValue()
-    {
-        /*
-        calculate total inventory value
-         */
-
-        return calculateContainerValue(InventoryID.INVENTORY);
-
+    /**
+     * Calculate total inventory and equipment value
+     *
+     * @return the value of inventory and equipment
+     */
+    public long calculateInventoryAndEquipmentValue() {
+        return calculateContainerValue(InventoryID.INVENTORY) + calculateContainerValue(InventoryID.EQUIPMENT);
     }
-
-    public long calculateEquipmentValue()
-    {
-        /*
-        calculate total equipment value
-         */
-        return calculateContainerValue(InventoryID.EQUIPMENT);
-    }
-
-    public long calculateInventoryAndEquipmentValue()
-    {
-        /*
-        calculate total inventory + equipment value
-         */
-
-        return calculateInventoryValue() + calculateEquipmentValue();
-    }
-
-
 }

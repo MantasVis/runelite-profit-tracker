@@ -1,66 +1,60 @@
 package com.profittracker;
 
+import static net.runelite.api.ScriptID.XPDROPS_SETDROPSIZE;
+import static net.runelite.api.ScriptID.XPDROP_DISABLED;
+import static net.runelite.api.widgets.WidgetInfo.TO_CHILD;
+import static net.runelite.api.widgets.WidgetInfo.TO_GROUP;
+
+import java.awt.*;
+
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.*;
+import net.runelite.api.Client;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
+import net.runelite.api.ItemID;
+import net.runelite.api.Skill;
+import net.runelite.api.SpritePixels;
+import net.runelite.api.Varbits;
 import net.runelite.api.events.ScriptPreFired;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 
-import java.awt.*;
-
-import static net.runelite.api.ScriptID.XPDROPS_SETDROPSIZE;
-import static net.runelite.api.ScriptID.XPDROP_DISABLED;
-import static net.runelite.api.widgets.WidgetInfo.TO_CHILD;
-import static net.runelite.api.widgets.WidgetInfo.TO_GROUP;
-
+/**
+ * Implement gold drops.
+ * We do this by using the XPDrop mechanism, namely the Fake XPDrop script, which is intended to generate xp drops for maxed out skills.
+ * Fake XP Drops are composed of a skill sprite, and a text widget with a mod icon (<img=11> in text).
+ * So to create a gold drop, we create a fake xp drop, and interfere in the middle, and change the sprite and text to our liking.
+ *
+ * Flow is:
+ * 1. create xp drop using runScript (see requestGoldDrop)
+ * 2. getting in the middle of the drop, changing icon and text (see handleXpDrop)
+ *
+ * A more correct way to do this is probably by calling Item.GetImage with wanted coin quantity, which will give us correct coin icon and correct text,
+ * and simply drawing that image ourself somehow, instead of using xp drop mechanism.
+ */
 @Slf4j
 public class ProfitTrackerGoldDrops {
-    /*
-       Implement gold drops.
-       We do this by using the XPDrop mechanism, namely the Fake XPDrop script,
-       which is intended to generate xp drops for maxed out skills.
-       Fake XP Drops are composed of a skill sprite,
-        and a text widget with a mod icon (<img=11> in text)
-       So to create a gold drop, we create a fake xp drop, and interefere in the middle,
-       and change the sprite and text to our liking.
 
-       Flow is:
-
-       1. create xp drop using runScript (see requestGoldDrop)
-       2. getting in the middle of the drop, changing icon and text (see handleXpDrop)
-
-       A more correct way to do this is probably by calling Item.GetImage with wanted
-       coin quantity, which will give us correct coin icon and correct text,
-       and simply drawing that image ourselfs somehow. Instead of using xp drop mechanism.
-     */
-
-    /*
-    Free sprite id for the gold icons.
-     */
-    private static final int COINS_SPRITE_ID = -1337;
-
-    // Skill ordinal to send in the fake xp drop script.
-    // doesn't matter which skill expect it's better not be attack/defense/magic to avoid collision with
-    // XpDropPlugin which looks for those and might change text color
-    private static final int XPDROP_SKILL = Skill.FISHING.ordinal();
-
-    // Value to send in the fake xp drop script. Doesn't matter at all
-    // since we don't use this value, but we use currentGoldDropValue
-    private static final int XPDROP_VALUE = 6;
-
-    /*
-    Singletons which will be provided at creation by the plugin
-     */
     private final ItemManager itemManager;
     private final Client client;
 
-    /* var currentGoldDropValue will have
-    the gold value of the current ongoing gold drop. 2 purposes:
+    //Free sprite id for the gold icons.
+    private static final int COINS_SPRITE_ID = -1337;
+
+    /* Skill ordinal to send in the fake xp drop script.
+    doesn't matter which skill except it's better not be attack/defense/magic to avoid collision with
+    XpDropPlugin which looks for those and might change text color. */
+    private static final int XPDROP_SKILL = Skill.FISHING.ordinal();
+
+    /* Value to send in the fake xp drop script. Doesn't matter at all
+    since we don't use this value, but we use currentGoldDropValue */
+    private static final int XPDROP_VALUE = 6;
+
+    /* var currentGoldDropValue will have the gold value of the current ongoing gold drop. 2 purposes:
       1. to know the value later when we actually use it,
-      2. to know to catch the next fake xpdrop in onScriptPreFired
-    */
+      2. to know to catch the next fake xpdrop in onScriptPreFired */
     private long currentGoldDropValue;
 
     ProfitTrackerGoldDrops(Client client, ItemManager itemManager)
@@ -71,17 +65,40 @@ public class ProfitTrackerGoldDrops {
         prepareCoinSprite();
 
         currentGoldDropValue = 0L;
-
     }
 
+    /**
+     * Prepare coin sprites for use in the gold drops.
+     * It seems item icons are not available as sprites with id, so we convert in this function.
+     */
+    private void prepareCoinSprite()
+    {
+        AsyncBufferedImage coinImageRaw;
+
+        // get image object by coin item id
+        coinImageRaw = itemManager.getImage(ItemID.COINS_995, 10000, false);
+
+        /* since getImage returns an AsyncBufferedImage, which is not loaded initially,
+         we schedule sprite conversion and sprite override for when the image is actually loaded */
+        coinImageRaw.onLoaded(() -> {
+            final SpritePixels coinSprite;
+
+            // convert image to sprite
+            coinSprite = ImageUtil.getImageSpritePixels(coinImageRaw, client);
+
+            // register new coin sprite by overriding a free sprite id
+            client.getSpriteOverrides().put(COINS_SPRITE_ID, coinSprite);
+        });
+    }
+
+    /**
+     * We check for scripts of type XPDROPS_SETDROPSIZE to interfere with the XPdrop and write our own values
+     *
+     * @param scriptPreFired
+     */
     public void onScriptPreFired(ScriptPreFired scriptPreFired)
     {
-        /*
-        We check for scripts of type XPDROPS_SETDROPSIZE to interfere with the XPdrop
-        and write our own values
-         */
 
-        // is this current script type?
         if (scriptPreFired.getScriptId() != XPDROPS_SETDROPSIZE)
         {
             return;
@@ -98,14 +115,13 @@ public class ProfitTrackerGoldDrops {
         final int widgetId = intStack[intStackSize - 4];
 
         // extract information from currentGoldDropValue
-        boolean isThisGoldDrop =   (currentGoldDropValue != 0);
-        long     goldDropValue =     currentGoldDropValue;
+        boolean isThisGoldDrop = (currentGoldDropValue != 0);
+        long goldDropValue = currentGoldDropValue;
 
         // done with this gold drop anyway
         currentGoldDropValue = 0;
 
         handleXpDrop(widgetId, isThisGoldDrop, goldDropValue);
-
     }
 
     private void handleXpDrop(int xpDropWidgetId, boolean isThisGoldDrop, long goldDropValue)
@@ -156,15 +172,17 @@ public class ProfitTrackerGoldDrops {
             resetXpDropTextColor(dropTextWidget);
         }
 
-
     }
+
+    /**
+     * Change xpdrop icon and text, to make a gold drop
+     *
+     * @param dropTextWidget
+     * @param dropSpriteWidget
+     * @param goldDropValue
+     */
     private void xpDropToGoldDrop(Widget dropTextWidget, Widget dropSpriteWidget, long goldDropValue)
     {
-        /*
-        Change xpdrop icon and text, to make a gold drop
-         */
-
-
         dropTextWidget.setText(formatGoldDropText(goldDropValue));
 
         if (goldDropValue > 0)
@@ -180,55 +198,21 @@ public class ProfitTrackerGoldDrops {
 
         // change skill sprite to coin sprite
         dropSpriteWidget.setSpriteId(COINS_SPRITE_ID);
-
-    }
-
-    private void prepareCoinSprite()
-    {
-        /*
-        Prepare coin sprites for use in the gold drops.
-        It seems item icons are not available as sprites with id,
-        so we convert in this function.
-
-        */
-
-        AsyncBufferedImage coin_image_raw;
-
-        // get image object by coin item id
-        coin_image_raw = itemManager.getImage(ItemID.COINS_995, 10000, false);
-
-        // since getImage returns an AsyncBufferedImage, which is not loaded initially,
-        // we schedule sprite conversion and sprite override for when the image is actually loaded
-        coin_image_raw.onLoaded(() -> {
-            final SpritePixels coin_sprite;
-
-            // convert image to sprite
-            coin_sprite = ImageUtil.getImageSpritePixels(coin_image_raw, client);
-
-            // register new coin sprite by overriding a free sprite id
-            client.getSpriteOverrides().put(COINS_SPRITE_ID, coin_sprite);
-        });
-
     }
 
     public void requestGoldDrop(long amount)
     {
-        /*
-        We create gold drops by faking a fake xp drop :)
-         */
-
         log.info(String.format("goldDrop: %d", amount));
 
         // save the value and mark an ongoing gold drop
         currentGoldDropValue = amount;
 
-        // Create a fake xp drop. the 2 last arguments don't matter:
-        // 1. skill ordinal - we will replace the icon anyway
-        // 2. value - since we want to be able to pass negative numbers, we pass the value using
-        // currentGoldDropValue instead of this argument
+        /* Create a fake xp drop. the 2 last arguments don't matter:
+        1. skill ordinal - we will replace the icon anyway
+        2. value - since we want to be able to pass negative numbers, we pass the value using
+        currentGoldDropValue instead of this argument */
 
         client.runScript(XPDROP_DISABLED, XPDROP_SKILL, XPDROP_VALUE);
-
     }
 
     private void resetXpDropTextColor(Widget xpDropTextWidget)
@@ -240,12 +224,15 @@ public class ProfitTrackerGoldDrops {
         xpDropTextWidget.setTextColor(color);
     }
 
+    /**
+     * Format gold value to RuneScape style up to 10000k
+     * I.E. 100,000 -> 100K
+     *
+     * @param goldDropValue gold value to format
+     * @return formatted value
+     */
     private String formatGoldDropText(long goldDropValue)
     {
-        // format gold value runescape style
-        // up to 10,000K
-        // I.E: 100,000 -> 100K
-
         if (Math.abs(goldDropValue) < 10000L)
         {
             return Long.toString(goldDropValue);
@@ -256,8 +243,7 @@ public class ProfitTrackerGoldDrops {
         }
         else
         {
-            return "ALOT";
+            return "A LOT";
         }
-
     }
 }

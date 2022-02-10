@@ -1,9 +1,7 @@
  <img src="https://oldschool.runescape.wiki/images/thumb/3/36/Coins_10000_detail.png/1024px-Coins_10000_detail.png?e07e3" width="200" title="hover text">
- 
- 
-# Profit Tracker Plugin
-NOTE: I've stopped working on this, I will probably not fix much of the issues. People are welcome to fork or use the code.
 
+
+# Profit Tracker Plugin
 
 This runelite plugin tracks the profit you are generating, according to GE, while money-making.
 ![image](https://user-images.githubusercontent.com/8212109/94357201-5d4c1780-009f-11eb-9c73-17c279edd613.png)
@@ -26,11 +24,10 @@ The plugin will simply begin tracking when it is loaded. So be sure to reload th
 Clone the repo, and run ProfitTrackerTest java class from Intellij.
 
 # Missing features
-I've developed this while being F2P. 
-There is no tracking of member stuff like tridents, dwarf cannon.
+
 
 # Credits
-Credit to wikiworm (Brandon Ripley) for his runelite plugin
-https://github.com/wikiworm/InventoryValue
-which helped for the creation of this plugin!
+Credit to nofatigue for his original profit calculator plugin
+https://github.com/nofatigue/runelite-profit-tracker
+I'm picking it up where he left off and continuing the development.
 
